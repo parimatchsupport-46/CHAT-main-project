@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.data/
+dev-server/.data/
+chat-page/.env
+chat-manage-pannel/.env
+.DS_Store
+*.log

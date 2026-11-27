@@ -1,0 +1,16 @@
+{
+  "name": "eden-chat-workspace",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Eden Chat — user app (chat-page) + admin app (chat-manage-pannel) ek shared backend ke saath",
+  "scripts": {
+    "setup": "npm --prefix chat-page install && npm --prefix chat-manage-pannel install",
+    "dev": "bash start-all.sh",
+    "dev-server": "node dev-server/server.mjs",
+    "dev:user": "npm --prefix chat-page run dev",
+    "dev:admin": "npm --prefix chat-manage-pannel run dev",
+    "build": "npm --prefix chat-page run build && npm --prefix chat-manage-pannel run build",
+    "lint": "npm --prefix chat-page run lint && npm --prefix chat-manage-pannel run lint",
+    "reset": "curl -s -X POST http://127.0.0.1:4317/api/reset && echo"
+  }
+}
