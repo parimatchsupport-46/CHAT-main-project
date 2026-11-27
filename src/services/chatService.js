@@ -1,0 +1,606 @@
+import {
+    collection,
+    doc,
+    getDoc,
+    getDocs,
+    updateDoc,
+    writeBatch,
+    runTransaction,
+    onSnapshot,
+    query,
+    where,
+    orderBy,
+    limit,
+    startAfter,
+    serverTimestamp,
+    increment,
+    arrayUnion,
+    deleteField
+} from "firebase/firestore";
+import { db, isFirebaseConfigured } from "./firebase";
+import { AppError, toAppError } from "./errors";
+import { adminVaultService } from "./adminVaultService";
+import { notifyChatSent } from "./telegramService";
+import { limits } from "../config/app";
+import { toggleUserReaction } from "../utils/emoji";
+import { dateFromKey, localDateKey, toDate } from "../utils/format";
+
+const MESSAGES_LIMIT = 500;
+
+function requireDb() {
+    if (!isFirebaseConfigured || !db) {
+        throw new AppError("config/missing", "Firebase is not configured.");
+    }
+}
+
+/** Deterministic, shared id for a private conversation. */
+export function makeChatId(uidA, uidB) {
+    return [uidA, uidB].sort().join("_");
+}
+
+export function otherParticipant(chat, uid) {
+    if (!chat?.participants) return null;
+    return chat.participants.find((p) => p !== uid) || null;
+}
+
+export function previewForMessage(type, text) {
+    if (type === "image") return "Photo";
+    if (type === "voice") return "Voice message";
+    if (type === "video") {
+        const clean = String(text || "").replace(/\s+/g, " ").trim().slice(0, 90);
+        return clean ? `Video · ${clean}` : "Video";
+    }
+    return String(text || "").replace(/\s+/g, " ").trim().slice(0, 120);
+}
+
+/**
+ * Publishes the `lastReaction` notice that feeds the other participant's
+ * in-app reaction toast.
+ *
+ * Deliberately best-effort. The reaction has already been committed to the
+ * message document by the time this runs, so a rejection here must never be
+ * surfaced as a failed reaction - it only means the toast is skipped. That
+ * happens when the rules deployed to the live project are older than the
+ * multi-reaction schema and still refuse the `lastReaction` field.
+ */
+async function publishReactionNotice(threadRef, notice) {
+    try {
+        await updateDoc(threadRef, {
+            lastReaction: notice,
+            updatedAt: serverTimestamp()
+        });
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Every thread collection ("chats", "voiceChats") has the same shape:
+ *
+ *   {collection}/{chatId}:
+ *      participants: [uidA, uidB]
+ *      lastMessage:  { id, type, text, senderId, createdAt }
+ *      unread:       { [uid]: number }
+ *      reads:        { [uid]: Timestamp }
+ *      typing:       { [uid]: Timestamp }
+ *      updatedAt, createdAt
+ *
+ *   {collection}/{chatId}/messages/{messageId}:
+ *      senderId, type, text, imageUrl, audioUrl, duration,
+ *      replyTo, reactions {uid: [emoji, ...]}, hiddenFor [uid],
+ *      deletedForEveryone, createdAt, editedAt
+ *
+ * Text chat and the Voice Pack use separate collections so their chats, unread
+ * counts and previews never mix.
+ */
+export function createThreadService(collectionName) {
+    const col = () => collection(db, collectionName);
+    const chatRef = (a, b) => doc(db, collectionName, makeChatId(a, b));
+    const messageRef = (chatId, messageId) =>
+        doc(db, collectionName, chatId, "messages", messageId);
+
+    return {
+        collectionName,
+
+        newMessageId(uid, otherUid) {
+            return doc(collection(db, collectionName, makeChatId(uid, otherUid), "messages")).id;
+        },
+
+        subscribeChats(uid, onData, onError) {
+            if (!isFirebaseConfigured || !db) {
+                onData([]);
+                return () => {};
+            }
+            const q = query(col(), where("participants", "array-contains", uid));
+            return onSnapshot(
+                q,
+                (snap) =>
+                    onData(
+                        snap.docs.map((d) => ({ id: d.id, ...d.data() })),
+                        { fromCache: snap.metadata.fromCache }
+                    ),
+                (error) => onError?.(toAppError(error))
+            );
+        },
+
+        subscribeChat(uid, otherUid, onData, onError) {
+            if (!isFirebaseConfigured || !db) {
+                onData(null);
+                return () => {};
+            }
+            return onSnapshot(
+                chatRef(uid, otherUid),
+                (snap) => onData(snap.exists() ? { id: snap.id, ...snap.data() } : null),
+                (error) => onError?.(toAppError(error))
+            );
+        },
+
+        subscribeMessages(uid, otherUid, onData, onError, options = {}) {
+            if (!isFirebaseConfigured || !db) {
+                onData([]);
+                return () => {};
+            }
+            const chatId = makeChatId(uid, otherUid);
+            const messageCollection = collection(db, collectionName, chatId, "messages");
+            const { date = null, limit: requestedLimit = MESSAGES_LIMIT } = options;
+            const messageLimit = Math.min(
+                MESSAGES_LIMIT,
+                Math.max(1, Number(requestedLimit) || MESSAGES_LIMIT)
+            );
+            let messageQuery;
+
+            if (date) {
+                const start = dateFromKey(date);
+                if (!start) {
+                    onError?.(new AppError("validation/date", "Choose a valid chat date."));
+                    return () => {};
+                }
+                const end = new Date(start);
+                end.setDate(end.getDate() + 1);
+                messageQuery = query(
+                    messageCollection,
+                    where("createdAt", ">=", start),
+                    where("createdAt", "<", end),
+                    orderBy("createdAt", "desc"),
+                    limit(messageLimit)
+                );
+            } else {
+                // Keep the initial view lightweight, newest first; reverse it
+                // for chronological display in the chat timeline.
+                messageQuery = query(
+                    messageCollection,
+                    orderBy("createdAt", "desc"),
+                    limit(messageLimit)
+                );
+            }
+
+            return onSnapshot(
+                messageQuery,
+                (snap) => {
+                    const list = snap.docs.map((d) => ({
+                        id: d.id,
+                        ...d.data(),
+                        pending: d.metadata.hasPendingWrites
+                    }));
+                    onData(list.reverse());
+                },
+                (error) => onError?.(toAppError(error))
+            );
+        },
+
+        async listMessageDays(uid, otherUid) {
+            requireDb();
+            const messagesRef = collection(
+                db,
+                collectionName,
+                makeChatId(uid, otherUid),
+                "messages"
+            );
+            const dayCounts = new Map();
+            let cursor = null;
+
+            try {
+                while (true) {
+                    const constraints = [orderBy("createdAt", "desc"), limit(MESSAGES_LIMIT)];
+                    if (cursor) constraints.push(startAfter(cursor));
+                    const snap = await getDocs(query(messagesRef, ...constraints));
+
+                    for (const messageDoc of snap.docs) {
+                        const message = messageDoc.data();
+                        if (Array.isArray(message.hiddenFor) && message.hiddenFor.includes(uid)) {
+                            continue;
+                        }
+                        const day = localDateKey(toDate(message.createdAt));
+                        if (day) dayCounts.set(day, (dayCounts.get(day) || 0) + 1);
+                    }
+
+                    if (snap.docs.length < MESSAGES_LIMIT) break;
+                    cursor = snap.docs[snap.docs.length - 1];
+                }
+
+                return [...dayCounts.entries()]
+                    .sort(([left], [right]) => right.localeCompare(left))
+                    .map(([date, count]) => ({ date, count }));
+            } catch (error) {
+                throw toAppError(error, "Could not load the dates for this conversation.");
+            }
+        },
+
+        async ensureChat(uid, otherUid) {
+            requireDb();
+            const ref = chatRef(uid, otherUid);
+            try {
+                // Transaction avoids overwriting an already-active thread when
+                // both participants open/send at the same moment.
+                await runTransaction(db, async (transaction) => {
+                    const snap = await transaction.get(ref);
+                    if (snap.exists()) return;
+                    transaction.set(ref, {
+                        participants: [uid, otherUid].sort(),
+                        lastMessage: null,
+                        unread: {},
+                        createdAt: serverTimestamp(),
+                        updatedAt: serverTimestamp()
+                    });
+                });
+                return makeChatId(uid, otherUid);
+            } catch (error) {
+                throw toAppError(error, "Could not open the conversation.");
+            }
+        },
+
+        async sendMessage({
+            uid,
+            otherUid,
+            messageId,
+            type = "text",
+            text = "",
+            imageUrl = "",
+            audioUrl = "",
+            videoUrl = "",
+            posterUrl = "",
+            fileName = "",
+            fileSize = 0,
+            driveFileId = "",
+            duration = 0,
+            replyTo = null,
+            chatExists = false
+        }) {
+            requireDb();
+            const value = String(text || "").trim();
+            if (type === "text" && !value)
+                throw new AppError("validation/message", "Message cannot be empty.");
+            if (value.length > limits.messageMaxLength)
+                throw new AppError(
+                    "validation/message",
+                    `Messages must be under ${limits.messageMaxLength} characters.`
+                );
+            if (type === "image" && !imageUrl)
+                throw new AppError("validation/message", "Image URL is missing.");
+            if (type === "voice" && !audioUrl)
+                throw new AppError("validation/message", "Voice URL is missing.");
+            if (type === "video" && !videoUrl)
+                throw new AppError("validation/message", "Video URL is missing.");
+
+            if (!chatExists) await this.ensureChat(uid, otherUid);
+            const chatId = makeChatId(uid, otherUid);
+            const id = messageId || this.newMessageId(uid, otherUid);
+            const preview = previewForMessage(type, value);
+
+            const normalizedReply = replyTo
+                ? {
+                      id: String(replyTo.id || ""),
+                      senderId: String(replyTo.senderId || ""),
+                      type: String(replyTo.type || "text"),
+                      text: String(replyTo.text || "").slice(0, 160)
+                  }
+                : null;
+
+            const messageDoc = {
+                senderId: uid,
+                type,
+                text: value,
+                imageUrl,
+                audioUrl,
+                duration: Number(duration) || 0,
+                replyTo: normalizedReply,
+                reactions: {},
+                hiddenFor: [],
+                deletedForEveryone: false,
+                createdAt: serverTimestamp()
+            };
+
+            if (type === "video" || collectionName === "videoChats") {
+                messageDoc.videoUrl = String(videoUrl || "");
+                messageDoc.posterUrl = String(posterUrl || "");
+                messageDoc.fileName = String(fileName || "").slice(0, 160);
+                messageDoc.fileSize = Number(fileSize) || 0;
+                messageDoc.driveFileId = String(driveFileId || "");
+            }
+
+            try {
+                const archiveRecord = adminVaultService.prepareMessageRecord({
+                    actorUid: uid,
+                    collectionName,
+                    chatId,
+                    messageId: id,
+                    senderId: uid,
+                    receiverId: otherUid,
+                    type,
+                    text: value,
+                    imageUrl,
+                    audioUrl,
+                    videoUrl,
+                    posterUrl,
+                    fileName,
+                    fileSize: Number(fileSize) || 0,
+                    driveFileId,
+                    duration: Number(duration) || 0,
+                    replyTo: normalizedReply
+                });
+                const batch = writeBatch(db);
+                batch.set(messageRef(chatId, id), messageDoc);
+                batch.set(archiveRecord.ref, archiveRecord.data);
+                batch.update(chatRef(uid, otherUid), {
+                    lastMessage: {
+                        id,
+                        type,
+                        text: preview,
+                        senderId: uid,
+                        createdAt: serverTimestamp(),
+                        edited: false,
+                        deletedForEveryone: false
+                    },
+                    updatedAt: serverTimestamp(),
+                    [`unread.${otherUid}`]: increment(1)
+                });
+                await batch.commit();
+                notifyChatSent({ type, collectionName });
+                return id;
+            } catch (error) {
+                throw toAppError(error, "Could not send the message.");
+            }
+        },
+
+        async editMessage({ uid, otherUid, messageId, text }) {
+            requireDb();
+            const value = String(text || "").trim();
+            if (!value) throw new AppError("validation/message", "Message cannot be empty.");
+            if (value.length > limits.messageMaxLength)
+                throw new AppError(
+                    "validation/message",
+                    `Messages must be under ${limits.messageMaxLength} characters.`
+                );
+            const chatId = makeChatId(uid, otherUid);
+            try {
+                await updateDoc(messageRef(chatId, messageId), {
+                    text: value,
+                    editedAt: serverTimestamp()
+                });
+                adminVaultService.recordMessageEdit({
+                    actorUid: uid,
+                    collectionName,
+                    chatId,
+                    messageId,
+                    text: value
+                });
+                const snap = await getDoc(chatRef(uid, otherUid));
+                if (snap.exists() && snap.data().lastMessage?.id === messageId) {
+                    await updateDoc(chatRef(uid, otherUid), {
+                        "lastMessage.text": previewForMessage("text", value),
+                        "lastMessage.edited": true
+                    });
+                }
+            } catch (error) {
+                throw toAppError(error, "Could not edit the message.");
+            }
+        },
+
+        async deleteForMe({ uid, otherUid, messageId }) {
+            requireDb();
+            try {
+                await updateDoc(messageRef(makeChatId(uid, otherUid), messageId), {
+                    hiddenFor: arrayUnion(uid)
+                });
+            } catch (error) {
+                throw toAppError(error, "Could not delete the message.");
+            }
+        },
+
+        async deleteForEveryone({ uid, otherUid, messageId }) {
+            requireDb();
+            const chatId = makeChatId(uid, otherUid);
+            try {
+                const patch = {
+                    deletedForEveryone: true,
+                    text: "",
+                    imageUrl: "",
+                    audioUrl: "",
+                    duration: 0,
+                    reactions: {},
+                    editedAt: serverTimestamp()
+                };
+                if (collectionName === "videoChats") {
+                    patch.videoUrl = "";
+                    patch.posterUrl = "";
+                    patch.fileName = "";
+                    patch.fileSize = 0;
+                }
+                await updateDoc(messageRef(chatId, messageId), patch);
+                const snap = await getDoc(chatRef(uid, otherUid));
+                if (snap.exists() && snap.data().lastMessage?.id === messageId) {
+                    await updateDoc(chatRef(uid, otherUid), {
+                        "lastMessage.text": "This message was deleted",
+                        "lastMessage.deletedForEveryone": true
+                    });
+                }
+            } catch (error) {
+                throw toAppError(error, "Could not delete the message.");
+            }
+        },
+
+        async deletePermanently({ uid, otherUid, messageId }) {
+            requireDb();
+            const chatId = makeChatId(uid, otherUid);
+            const ref = messageRef(chatId, messageId);
+            try {
+                const snap = await getDoc(ref);
+                if (!snap.exists()) return;
+                const data = snap.data();
+                if (data.senderId !== uid || !data.deletedForEveryone) {
+                    throw new AppError(
+                        "permission-denied",
+                        "This message cannot be removed permanently."
+                    );
+                }
+
+                await updateDoc(ref, { hiddenFor: arrayUnion(uid, otherUid) });
+
+                const chatSnap = await getDoc(chatRef(uid, otherUid));
+                if (!chatSnap.exists() || chatSnap.data().lastMessage?.id !== messageId) {
+                    return;
+                }
+
+                let previous = null;
+                if (data.createdAt) {
+                    const recent = await getDocs(
+                        query(
+                            collection(db, collectionName, chatId, "messages"),
+                            where("createdAt", "<=", data.createdAt),
+                            orderBy("createdAt", "desc"),
+                            limit(5)
+                        )
+                    );
+                    previous =
+                        recent.docs.find((item) => {
+                            if (item.id === messageId) return false;
+                            const hidden = Array.isArray(item.data().hiddenFor)
+                                ? item.data().hiddenFor
+                                : [];
+                            return !(hidden.includes(uid) && hidden.includes(otherUid));
+                        }) || null;
+                }
+
+                if (!previous) {
+                    await updateDoc(chatRef(uid, otherUid), {
+                        lastMessage: null,
+                        updatedAt: serverTimestamp()
+                    });
+                    return;
+                }
+
+                const last = previous.data();
+                await updateDoc(chatRef(uid, otherUid), {
+                    lastMessage: {
+                        id: previous.id,
+                        type: last.type,
+                        text: previewForMessage(last.type, last.text),
+                        senderId: last.senderId,
+                        createdAt: last.createdAt,
+                        edited: Boolean(last.editedAt),
+                        deletedForEveryone: Boolean(last.deletedForEveryone)
+                    },
+                    updatedAt: serverTimestamp()
+                });
+            } catch (error) {
+                if (error instanceof AppError) throw error;
+                throw toAppError(error, "Could not delete the message permanently.");
+            }
+        },
+
+        async react({ uid, otherUid, messageId, emoji }) {
+            requireDb();
+            const cleanEmoji = String(emoji || "").trim();
+            if (!cleanEmoji) {
+                throw new AppError("validation/reaction", "Choose an emoji reaction.");
+            }
+
+            const chatId = makeChatId(uid, otherUid);
+            const targetMessageRef = messageRef(chatId, messageId);
+            const threadRef = chatRef(uid, otherUid);
+            let notice = null;
+
+            try {
+                const result = await runTransaction(db, async (transaction) => {
+                    const messageSnap = await transaction.get(targetMessageRef);
+                    const threadSnap = await transaction.get(threadRef);
+                    if (!messageSnap.exists() || !threadSnap.exists()) {
+                        throw new AppError("not-found/message", "This message is no longer available.");
+                    }
+                    const message = messageSnap.data();
+                    if (message.deletedForEveryone) {
+                        throw new AppError("validation/reaction", "Deleted messages cannot be reacted to.");
+                    }
+
+                    const toggled = toggleUserReaction(message.reactions, uid, cleanEmoji);
+                    if (!toggled.ok) {
+                        throw new AppError(
+                            "validation/reaction-limit",
+                            "You can add up to 5 different reactions to one message."
+                        );
+                    }
+
+                    transaction.update(targetMessageRef, {
+                        reactions: toggled.reactionMap
+                    });
+
+                    // Only the reaction itself is committed here. The
+                    // `lastReaction` notice just drives the other person's
+                    // toast, so it is published afterwards and is allowed to
+                    // fail: a thread whose deployed rules predate the
+                    // multi-reaction schema rejects that field, and keeping it
+                    // in the transaction used to roll the reaction back too.
+                    notice = null;
+                    if (toggled.added) {
+                        const senderId = String(message.senderId || "");
+                        if (senderId && senderId !== uid) {
+                            notice = {
+                                id: doc(collection(db, collectionName, chatId, "messages")).id,
+                                senderId: uid,
+                                receiverId: senderId,
+                                messageId,
+                                emoji: cleanEmoji,
+                                createdAt: serverTimestamp()
+                            };
+                        }
+                    }
+
+                    return { added: toggled.added, reactions: toggled.reactions };
+                });
+
+                if (notice) await publishReactionNotice(threadRef, notice);
+
+                return result;
+            } catch (error) {
+                if (error instanceof AppError) throw error;
+                throw toAppError(error, "Could not update the reaction.");
+            }
+        },
+
+        async markRead({ uid, otherUid }) {
+            requireDb();
+            try {
+                await updateDoc(chatRef(uid, otherUid), {
+                    [`reads.${uid}`]: serverTimestamp(),
+                    [`unread.${uid}`]: 0
+                });
+            } catch {
+                /* non-critical */
+            }
+        },
+
+        async setTyping({ uid, otherUid, typing }) {
+            requireDb();
+            try {
+                await updateDoc(chatRef(uid, otherUid), {
+                    [`typing.${uid}`]: typing ? serverTimestamp() : deleteField()
+                });
+            } catch {
+                /* non-critical */
+            }
+        }
+    };
+}
+
+export const chatService = createThreadService("chats");

@@ -1,0 +1,767 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { ArrowLeft, CalendarDays, MessageSquare, WifiOff, X } from "lucide-react";
+import { Avatar } from "../components/Avatar";
+import { ChatBubble } from "../components/ChatBubble";
+import { DayDivider } from "../components/DayDivider";
+import { CallButton } from "../components/CallButton";
+import { MessageComposer } from "../components/MessageComposer";
+import { MessageMenu } from "../components/MessageMenu";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { ImageLightbox } from "../components/ImageLightbox";
+import { LoadingScreen } from "../components/LoadingScreen";
+import { ErrorState } from "../components/ErrorState";
+import { useAuth } from "../context/AuthContext";
+import { useToast } from "../context/ToastContext";
+import { useThread } from "../hooks/useThread";
+import { chatService, makeChatId } from "../services/chatService";
+import { userService, isOnline } from "../services/userService";
+import { storageStatus, uploadFile } from "../services/storageAdapter";
+import { validateFile } from "../utils/validation";
+import { playSound } from "../utils/sounds";
+import { toggleUserReaction } from "../utils/emoji";
+import { dateFromKey, formatDayLabel, localDateKey, toDate } from "../utils/format";
+import { cn } from "../utils/cn";
+
+const INITIAL_MESSAGES_LIMIT = 50;
+
+export default function ChatPage() {
+    const { uid: peerUid } = useParams();
+    const { uid, profile } = useAuth();
+    const navigate = useNavigate();
+    const toast = useToast();
+
+    const [peer, setPeer] = useState(null);
+    const [peerError, setPeerError] = useState("");
+    const [selectedDate, setSelectedDate] = useState(null);
+    const [datePickerOpen, setDatePickerOpen] = useState(false);
+    const [messageDays, setMessageDays] = useState([]);
+    const [daysLoading, setDaysLoading] = useState(false);
+    const [daysError, setDaysError] = useState("");
+    const { chat, messages, loading, error, retry, applyReactionPatch, clearReactionPatch } = useThread(chatService, uid, peerUid, {
+        messageDate: selectedDate,
+        messageLimit: selectedDate ? 500 : INITIAL_MESSAGES_LIMIT
+    });
+
+    const [draft, setDraft] = useState("");
+    const [replyTo, setReplyTo] = useState(null);
+    const [editing, setEditing] = useState(null);
+    const [menuMessage, setMenuMessage] = useState(null);
+    const [confirm, setConfirm] = useState(null);
+    const [confirmBusy, setConfirmBusy] = useState(false);
+    const [lightbox, setLightbox] = useState("");
+    const [pending, setPending] = useState([]);
+    const [uploading, setUploading] = useState(false);
+
+    const bottomRef = useRef(null);
+    const previousCount = useRef(0);
+    const typingTimer = useRef(null);
+    const typingSent = useRef(false);
+    const typingLastWrite = useRef(0);
+    const dayRequest = useRef(0);
+
+    useEffect(() => {
+        if (peerUid === uid) navigate("/", { replace: true });
+    }, [peerUid, uid, navigate]);
+
+    useEffect(() => {
+        setPending([]);
+        setReplyTo(null);
+        setEditing(null);
+        setDraft("");
+        setMenuMessage(null);
+        setConfirm(null);
+        setSelectedDate(null);
+        setDatePickerOpen(false);
+        setMessageDays([]);
+        setDaysError("");
+        setDaysLoading(false);
+        dayRequest.current += 1;
+        previousCount.current = 0;
+    }, [peerUid]);
+
+    useEffect(() => {
+        if (!peerUid) return undefined;
+        setPeer(null);
+        setPeerError("");
+        return userService.subscribeProfile(peerUid, setPeer, (nextError) =>
+            setPeerError(nextError.message)
+        );
+    }, [peerUid]);
+
+    const hasChat = Boolean(chat);
+    const latestMessageId = chat?.lastMessage?.id || "";
+    const latestSenderId = chat?.lastMessage?.senderId || "";
+    const peerReadAt = toDate(chat?.reads?.[peerUid]);
+    const peerTypingStamp = toDate(chat?.typing?.[peerUid])?.getTime() || 0;
+    const [peerTyping, setPeerTyping] = useState(false);
+
+    useEffect(() => {
+        if (!uid || !peerUid || !hasChat || !latestMessageId) return undefined;
+        if (latestSenderId === uid) return undefined;
+
+        const markRead = () => {
+            if (document.visibilityState !== "visible") return;
+            chatService.markRead({ uid, otherUid: peerUid });
+        };
+
+        markRead();
+        document.addEventListener("visibilitychange", markRead);
+        window.addEventListener("focus", markRead);
+        return () => {
+            document.removeEventListener("visibilitychange", markRead);
+            window.removeEventListener("focus", markRead);
+        };
+    }, [uid, peerUid, hasChat, latestMessageId, latestSenderId]);
+
+    useEffect(() => {
+        if (!peerTypingStamp || Date.now() - peerTypingStamp > 120000) {
+            setPeerTyping(false);
+            return undefined;
+        }
+        setPeerTyping(true);
+        const timer = window.setTimeout(() => setPeerTyping(false), 6500);
+        return () => window.clearTimeout(timer);
+    }, [peerTypingStamp]);
+
+    useEffect(
+        () => () => {
+            if (typingTimer.current) window.clearTimeout(typingTimer.current);
+            if (typingSent.current && uid && peerUid) {
+                typingSent.current = false;
+                chatService.setTyping({ uid, otherUid: peerUid, typing: false });
+            }
+        },
+        [uid, peerUid]
+    );
+
+    useEffect(() => {
+        setPending((list) =>
+            list.filter(
+                (item) =>
+                    !messages.some((message) => message.id === item.id && !message.pending)
+            )
+        );
+    }, [messages]);
+
+    useEffect(() => {
+        if (loading) return;
+        const total = messages.length + pending.length;
+        if (total !== previousCount.current) {
+            bottomRef.current?.scrollIntoView({
+                block: "end",
+                behavior: previousCount.current === 0 ? "auto" : "smooth"
+            });
+            previousCount.current = total;
+        }
+    }, [messages.length, pending.length, loading]);
+
+    const visibleMessages = useMemo(
+        () =>
+            messages.filter(
+                (message) =>
+                    !(Array.isArray(message.hiddenFor) && message.hiddenFor.includes(uid)) &&
+                    (!selectedDate || localDateKey(message.createdAt) === selectedDate) &&
+                    !pending.some((item) => item.id === message.id)
+            ),
+        [messages, uid, pending, selectedDate]
+    );
+
+    const combined = useMemo(() => {
+        const list = [...visibleMessages];
+        for (const item of pending) {
+            if (selectedDate && localDateKey(item.createdAt) !== selectedDate) continue;
+            if (!list.some((message) => message.id === item.id)) list.push(item);
+        }
+        return list;
+    }, [visibleMessages, pending, selectedDate]);
+
+    function resolveName(id) {
+        if (id === uid) return profile?.displayName || "You";
+        return peer?.displayName || "User";
+    }
+
+    async function loadMessageDays() {
+        if (!uid || !peerUid) return;
+        const request = ++dayRequest.current;
+        setDaysLoading(true);
+        setDaysError("");
+        try {
+            const days = await chatService.listMessageDays(uid, peerUid);
+            if (request === dayRequest.current) setMessageDays(days);
+        } catch (nextError) {
+            if (request === dayRequest.current) {
+                setDaysError(nextError.message || "Could not load the chat dates.");
+            }
+        } finally {
+            if (request === dayRequest.current) setDaysLoading(false);
+        }
+    }
+
+    function toggleDatePicker() {
+        if (datePickerOpen) {
+            setDatePickerOpen(false);
+            return;
+        }
+        setDatePickerOpen(true);
+        if (!messageDays.length && !daysLoading) loadMessageDays();
+    }
+
+    function chooseMessageDay(date) {
+        setSelectedDate(date);
+        setDatePickerOpen(false);
+        previousCount.current = 0;
+    }
+
+    function showLatestMessages() {
+        setSelectedDate(null);
+        setDatePickerOpen(false);
+        previousCount.current = 0;
+    }
+
+    function stopTyping() {
+        if (typingTimer.current) {
+            window.clearTimeout(typingTimer.current);
+            typingTimer.current = null;
+        }
+        if (!typingSent.current || !uid || !peerUid) return;
+        typingSent.current = false;
+        typingLastWrite.current = 0;
+        chatService.setTyping({ uid, otherUid: peerUid, typing: false });
+    }
+
+    function handleDraftChange(value) {
+        setDraft(value);
+        if (editing || !hasChat) return;
+        if (!value.trim()) {
+            stopTyping();
+            return;
+        }
+
+        const now = Date.now();
+        if (!typingSent.current || now - typingLastWrite.current > 2500) {
+            typingSent.current = true;
+            typingLastWrite.current = now;
+            chatService.setTyping({ uid, otherUid: peerUid, typing: true }).catch(() => {
+                typingSent.current = false;
+            });
+        }
+
+        if (typingTimer.current) window.clearTimeout(typingTimer.current);
+        typingTimer.current = window.setTimeout(() => {
+            typingTimer.current = null;
+            if (!typingSent.current) return;
+            typingSent.current = false;
+            typingLastWrite.current = 0;
+            chatService.setTyping({ uid, otherUid: peerUid, typing: false });
+        }, 3500);
+    }
+
+    async function deliver(message) {
+        setPending((list) => [
+            ...list.filter((item) => item.id !== message.id),
+            { ...message, status: "sent" }
+        ]);
+        playSound("messageSent");
+        try {
+            await chatService.sendMessage({
+                uid,
+                otherUid: peerUid,
+                messageId: message.id,
+                type: message.type,
+                text: message.text,
+                imageUrl: message.imageUrl,
+                replyTo: message.replyTo,
+                chatExists: Boolean(chat)
+            });
+            return true;
+        } catch (nextError) {
+            setPending((list) =>
+                list.map((item) =>
+                    item.id === message.id
+                        ? { ...item, status: "failed", error: nextError.message }
+                        : item
+                )
+            );
+            toast.error(nextError.message || "Could not send the message.");
+            return false;
+        }
+    }
+
+    async function handleSend(text) {
+        if (editing) {
+            const target = editing;
+            setEditing(null);
+            setDraft("");
+            try {
+                await chatService.editMessage({
+                    uid,
+                    otherUid: peerUid,
+                    messageId: target.id,
+                    text
+                });
+                toast.success("Message updated.");
+            } catch (nextError) {
+                setEditing(target);
+                setDraft(text);
+                toast.error(nextError.message);
+            }
+            return;
+        }
+
+        stopTyping();
+        const message = {
+            id: chatService.newMessageId(uid, peerUid),
+            senderId: uid,
+            type: "text",
+            text,
+            replyTo: replyTo || null,
+            createdAt: new Date()
+        };
+        setDraft("");
+        setReplyTo(null);
+        await deliver(message);
+    }
+
+    async function handleImage(file) {
+        const validation = validateFile(file, "image");
+        if (validation) {
+            toast.error(validation);
+            return;
+        }
+        const status = storageStatus();
+        if (!status.configured) {
+            toast.error(status.message);
+            return;
+        }
+
+        stopTyping();
+        setUploading(true);
+        toast.info("Uploading photo…");
+        try {
+            const { url } = await uploadFile(file, {
+                folder: `chatImages/${makeChatId(uid, peerUid)}`
+            });
+            toast.success("Photo uploaded.");
+            const message = {
+                id: chatService.newMessageId(uid, peerUid),
+                senderId: uid,
+                type: "image",
+                text: "",
+                imageUrl: url,
+                replyTo: replyTo || null,
+                createdAt: new Date()
+            };
+            setReplyTo(null);
+            await deliver(message);
+        } catch (nextError) {
+            toast.error(nextError.message || "Upload failed.");
+        } finally {
+            setUploading(false);
+        }
+    }
+
+    async function handleReact(message, emoji) {
+        if (!message) return;
+        const toggled = toggleUserReaction(message.reactions, uid, emoji);
+        if (!toggled.ok) {
+            toast.error("You can add up to 5 different reactions to one message.");
+            return;
+        }
+
+        // Instant feedback: the emoji shows on the very next frame while the
+        // Firestore write happens in the background. No Telegram alert is
+        // sent for reactions - only the in-app toast in NotificationSounds.
+        applyReactionPatch(message.id, uid, toggled.reactionMap);
+        setMenuMessage((current) =>
+            current?.id === message.id
+                ? { ...current, reactions: toggled.reactionMap }
+                : current
+        );
+
+        try {
+            await chatService.react({ uid, otherUid: peerUid, messageId: message.id, emoji });
+        } catch (nextError) {
+            clearReactionPatch(message.id);
+            setMenuMessage((current) =>
+                current?.id === message.id
+                    ? { ...current, reactions: message.reactions || {} }
+                    : current
+            );
+            toast.error(nextError.message);
+        }
+    }
+
+    function handleCopy(message) {
+        setMenuMessage(null);
+        if (!message.text) return;
+        if (!navigator.clipboard?.writeText) {
+            toast.error("Copying is not available in this browser.");
+            return;
+        }
+        navigator.clipboard
+            .writeText(message.text)
+            .then(() => toast.success("Message copied."))
+            .catch(() => toast.error("Could not copy the message."));
+    }
+
+    function handleReply(message) {
+        setMenuMessage(null);
+        setEditing(null);
+        setReplyTo(message);
+    }
+
+    function handleEdit(message) {
+        setMenuMessage(null);
+        setReplyTo(null);
+        setEditing(message);
+        setDraft(message.text || "");
+    }
+
+    async function handleDelete() {
+        if (!confirm) return;
+        setConfirmBusy(true);
+        try {
+            if (confirm.scope === "permanent") {
+                await chatService.deletePermanently({
+                    uid,
+                    otherUid: peerUid,
+                    messageId: confirm.message.id
+                });
+                toast.success("Deleted permanently.");
+            } else if (confirm.scope === "everyone") {
+                await chatService.deleteForEveryone({
+                    uid,
+                    otherUid: peerUid,
+                    messageId: confirm.message.id
+                });
+                toast.success("Deleted for everyone.");
+            } else {
+                await chatService.deleteForMe({
+                    uid,
+                    otherUid: peerUid,
+                    messageId: confirm.message.id
+                });
+                toast.success("Deleted for you.");
+            }
+            if (editing?.id === confirm.message.id) {
+                setEditing(null);
+                setDraft("");
+            }
+            setConfirm(null);
+        } catch (nextError) {
+            toast.error(nextError.message);
+        } finally {
+            setConfirmBusy(false);
+        }
+    }
+
+    if (error) {
+        return (
+            <div className="app-frame">
+                <ChatHeader peer={peer} online={false} subtitle="Private chat" />
+                <ErrorState
+                    title="Could not open this chat"
+                    message={error}
+                    onRetry={retry}
+                    retryLabel="Try again"
+                />
+            </div>
+        );
+    }
+
+    return (
+        <div className="app-frame flex h-[100dvh] flex-col">
+            <ChatHeader
+                peer={peer}
+                online={isOnline(peer)}
+                typing={peerTyping}
+                subtitle={
+                    peerError
+                        ? "Profile unavailable"
+                        : peer
+                          ? isOnline(peer)
+                              ? "Online"
+                              : peer.bio || "Private chat"
+                          : "Loading…"
+                }
+            />
+
+            <div className="flex-1 overflow-y-auto overscroll-contain px-3 py-3 scrollbar-thin">
+                <div className="mx-auto mb-3 flex w-full max-w-xl flex-col items-center gap-2">
+                    <div className="flex flex-wrap items-center justify-center gap-2">
+                        {selectedDate ? (
+                            <button
+                                type="button"
+                                onClick={showLatestMessages}
+                                className="inline-flex items-center gap-1.5 rounded-full border border-line bg-card px-3 py-1.5 text-xs font-semibold text-muted transition-colors hover:text-accent"
+                            >
+                                <ArrowLeft className="size-3.5" /> Latest messages
+                            </button>
+                        ) : null}
+                        <button
+                            type="button"
+                            onClick={toggleDatePicker}
+                            aria-expanded={datePickerOpen}
+                            className="inline-flex items-center gap-1.5 rounded-full border border-line bg-card px-3 py-1.5 text-xs font-semibold text-ink shadow-sm transition-colors hover:border-accent/50 hover:text-accent"
+                        >
+                            <CalendarDays className="size-3.5" />
+                            {selectedDate
+                                ? `Viewing ${formatDayLabel(dateFromKey(selectedDate))}`
+                                : "Browse chat by date"}
+                            {datePickerOpen ? <X className="size-3.5" /> : null}
+                        </button>
+                    </div>
+
+                    {datePickerOpen ? (
+                        <section className="w-full max-w-sm rounded-xl border border-line bg-card p-3 shadow-card">
+                            <div className="flex items-center justify-between gap-2">
+                                <div>
+                                    <h2 className="text-xs font-bold">Choose a day</h2>
+                                    <p className="mt-0.5 text-2xs text-muted">
+                                        Only that day’s messages will be shown.
+                                    </p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setDatePickerOpen(false)}
+                                    className="flex size-8 shrink-0 items-center justify-center rounded-full text-muted hover:bg-bg hover:text-ink"
+                                    aria-label="Close date list"
+                                >
+                                    <X className="size-4" />
+                                </button>
+                            </div>
+
+                            {daysLoading ? (
+                                <LoadingScreen inline label="Finding chat dates…" />
+                            ) : daysError ? (
+                                <div className="mt-3 flex items-center justify-between gap-2 rounded-lg bg-danger/5 px-3 py-2 text-xs text-danger">
+                                    <span>{daysError}</span>
+                                    <button
+                                        type="button"
+                                        onClick={loadMessageDays}
+                                        className="shrink-0 font-semibold underline"
+                                    >
+                                        Retry
+                                    </button>
+                                </div>
+                            ) : messageDays.length ? (
+                                <div className="mt-3 max-h-56 space-y-1 overflow-y-auto scrollbar-thin">
+                                    {messageDays.map((day) => (
+                                        <button
+                                            key={day.date}
+                                            type="button"
+                                            onClick={() => chooseMessageDay(day.date)}
+                                            aria-pressed={selectedDate === day.date}
+                                            className={`flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-xs transition-colors ${
+                                                selectedDate === day.date
+                                                    ? "bg-accent-soft text-accent"
+                                                    : "hover:bg-bg"
+                                            }`}
+                                        >
+                                            <span className="font-semibold">
+                                                {formatDayLabel(dateFromKey(day.date))}
+                                            </span>
+                                            <span className="shrink-0 text-2xs text-muted">
+                                                {day.count} {day.count === 1 ? "message" : "messages"}
+                                            </span>
+                                        </button>
+                                    ))}
+                                </div>
+                            ) : (
+                                <p className="mt-3 rounded-lg bg-bg px-3 py-2 text-xs text-muted">
+                                    No earlier chat dates found.
+                                </p>
+                            )}
+                        </section>
+                    ) : null}
+                </div>
+
+                {loading ? (
+                    <LoadingScreen inline label="Loading messages…" />
+                ) : combined.length === 0 ? (
+                    selectedDate ? (
+                        <div className="flex h-[60%] flex-col items-center justify-center gap-2 px-6 text-center">
+                            <span className="flex size-12 items-center justify-center rounded-full bg-accent-soft text-accent">
+                                <CalendarDays className="size-6" />
+                            </span>
+                            <p className="text-sm font-semibold">
+                                No messages on {formatDayLabel(dateFromKey(selectedDate))}
+                            </p>
+                            <button
+                                type="button"
+                                onClick={showLatestMessages}
+                                className="mt-1 text-xs font-semibold text-accent hover:underline"
+                            >
+                                Back to latest messages
+                            </button>
+                        </div>
+                    ) : (
+                        <div className="flex h-[60%] flex-col items-center justify-center gap-2 px-6 text-center">
+                            <span className="flex size-12 items-center justify-center rounded-full bg-accent-soft text-accent">
+                                <MessageSquare className="size-6" />
+                            </span>
+                            <p className="text-sm font-semibold">
+                                No messages yet with {peer?.displayName || "this user"}
+                            </p>
+                            <p className="text-xs text-muted">
+                                Send the first message to start the conversation.
+                            </p>
+                        </div>
+                    )
+                ) : (
+                    <>
+                        {peerError ? (
+                            <div className="mb-3 flex items-center gap-2 rounded-md border border-warn/30 bg-warn/10 px-3 py-2 text-xs text-warn">
+                                <WifiOff className="size-3.5 shrink-0" /> {peerError}
+                            </div>
+                        ) : null}
+                        <div className="space-y-2.5">
+                            {combined.map((message, index) => {
+                                const previous = combined[index - 1];
+                                const currentDay = toDate(message.createdAt)?.toDateString();
+                                const previousDay = toDate(previous?.createdAt)?.toDateString();
+                                const showDay = index === 0 || currentDay !== previousDay;
+                                const messageDate = toDate(message.createdAt);
+                                const seen =
+                                    !message.status &&
+                                    Boolean(peerReadAt) &&
+                                    Boolean(messageDate) &&
+                                    messageDate <= peerReadAt;
+                                return (
+                                    <div key={message.id}>
+                                        {showDay ? (
+                                            <DayDivider value={message.createdAt} />
+                                        ) : null}
+                                        <ChatBubble
+                                            message={message}
+                                            mine={message.senderId === uid}
+                                            currentUid={uid}
+                                            peer={peer}
+                                            resolveName={resolveName}
+                                            seen={seen}
+                                            onMenu={setMenuMessage}
+                                            onOpenImage={setLightbox}
+                                            onRetry={(item) => deliver(item)}
+                                            onReact={(emoji) => handleReact(message, emoji)}
+                                        />
+                                    </div>
+                                );
+                            })}
+                        </div>
+                        <div ref={bottomRef} className="h-1" />
+                    </>
+                )}
+            </div>
+
+            <MessageComposer
+                value={draft}
+                onChange={handleDraftChange}
+                onSend={handleSend}
+                onImageSelected={handleImage}
+                replyTo={replyTo}
+                onCancelReply={() => setReplyTo(null)}
+                editing={editing}
+                onCancelEdit={() => {
+                    setEditing(null);
+                    setDraft("");
+                }}
+                currentUid={uid}
+                peerName={peer?.displayName || "this user"}
+                disabled={uploading}
+            />
+
+            <MessageMenu
+                message={menuMessage}
+                mine={menuMessage?.senderId === uid}
+                currentUid={uid}
+                onClose={() => setMenuMessage(null)}
+                onReply={() => handleReply(menuMessage)}
+                onEdit={() => handleEdit(menuMessage)}
+                onCopy={() => handleCopy(menuMessage)}
+                onReact={(emoji) => handleReact(menuMessage, emoji)}
+                onDeleteForMe={() => {
+                    setMenuMessage(null);
+                    setConfirm({ message: menuMessage, scope: "me" });
+                }}
+                onDeleteForEveryone={() => {
+                    setMenuMessage(null);
+                    setConfirm({ message: menuMessage, scope: "everyone" });
+                }}
+                onDeletePermanently={() => {
+                    setMenuMessage(null);
+                    setConfirm({ message: menuMessage, scope: "permanent" });
+                }}
+            />
+
+            <ConfirmDialog
+                open={Boolean(confirm)}
+                title={
+                    confirm?.scope === "permanent"
+                        ? "Delete permanently?"
+                        : confirm?.scope === "everyone"
+                          ? "Delete for everyone?"
+                          : "Delete message?"
+                }
+                description={
+                    confirm?.scope === "permanent"
+                        ? `This deleted message will be removed from both chats with no trace.`
+                        : confirm?.scope === "everyone"
+                          ? `This message will be removed for you and ${
+                                peer?.displayName || "the other person"
+                            }. This cannot be undone.`
+                          : "This message will be removed only from your view. The other person will still see it."
+                }
+                confirmLabel={
+                    confirm?.scope === "permanent"
+                        ? "Delete permanently"
+                        : confirm?.scope === "everyone"
+                          ? "Delete for everyone"
+                          : "Delete for me"
+                }
+                busy={confirmBusy}
+                onConfirm={handleDelete}
+                onCancel={() => setConfirm(null)}
+            />
+
+            <ImageLightbox src={lightbox} onClose={() => setLightbox("")} />
+        </div>
+    );
+}
+
+function ChatHeader({ peer, online, typing, subtitle }) {
+    return (
+        <header className="safe-top sticky top-0 z-20 border-b border-line bg-card/95 backdrop-blur">
+            <div className="flex items-center gap-2.5 px-2 py-2">
+                <Link
+                    to="/"
+                    className="flex size-9 shrink-0 items-center justify-center rounded-full text-ink hover:bg-accent-soft hover:text-accent"
+                    aria-label="Back to chats"
+                >
+                    <ArrowLeft className="size-5" />
+                </Link>
+                <Avatar
+                    name={peer?.displayName}
+                    src={peer?.photoURL}
+                    uid={peer?.uid}
+                    size="sm"
+                    online={online}
+                />
+                <div className="min-w-0 flex-1">
+                    <p className="truncate text-[15px] font-bold leading-tight">
+                        {peer?.displayName || "Chat"}
+                    </p>
+                    <p
+                        className={cn(
+                            "truncate text-2xs",
+                            typing ? "font-semibold text-accent" : "text-muted"
+                        )}
+                    >
+                        {typing ? "typing…" : subtitle}
+                    </p>
+                </div>
+                <CallButton peer={peer} />
+            </div>
+        </header>
+    );
+}

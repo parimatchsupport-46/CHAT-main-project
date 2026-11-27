@@ -1,264 +1,299 @@
-# Eden Chat — 2 alag apps
+# Personal Chat
 
-Project do **independent** apps me bata diya gaya hai. Dono apni files, apne components,
-apni CSS aur apna `package.json` khud rakhte hain — kisi ki cheez doosre ke folder me nahi hai.
+A mobile-first personal chat web app built with React + Vite + Tailwind CSS and
+Firebase (Authentication + Cloud Firestore), with optional Firebase Storage or
+a separate PHP media backend for images/voice notes. The UI follows
+the **OWN LABRARY** design tokens (accent `#4f6bed`, 6px radii, iOS-like
+spacing/typography, light + dark theme).
 
-```
-.
-├─ chat-page/              ← USER app (profile setup + chat with support)
-├─ chat-manage-pannel/     ← ADMIN app (saare users ki list + chat)
-├─ dev-server/             ← sirf development ka chhota backend (Firebase na hone par)
-├─ package.json            ← root commands (setup / dev / build / lint / reset)
-└─ start-all.sh            ← teeno ek saath chalane wali script
-```
+There are **no fake users or demo messages**. Every list, message, edit,
+reaction, unread count and profile change comes from Firebase in real time.
 
-## 📌 Current status (2026-11-27, updated)
+## Pages
 
-| Cheez | Status |
-| --- | --- |
-| Dono apps (user + admin) | ✅ Chal rahi hain — features complete |
-| Build + lint | ✅ Clean (`npm run build`, `npm run lint` — 0 errors) |
-| **Firestore database** | ✅ **LIVE — kaam kar raha hai** (`chat-project-ecb1c`) |
-| Abhi data kahan | ☁️ **Cloud mode** — admin footer me "Firebase connected" |
-| Local fallback | 🟡 Backup ke liye maujood — Firestore fail ho to app khud shift ho jati hai |
-| Vercel deploy | 🟠 Dono apps deploy hain, par **env vars pending** → abhi local mode me. Fix: `FIREBASE-SETUP.md` §6 (env vars + **redeploy**) |
-
-**Aaj cloud mode me pura test hua (asli Firestore par, mock nahi):**
-
-- profile save → chat open ✅
-- text + **image** + **PDF** message → Firestore me save ✅ (attachments `dataUrl` ke roop me)
-- admin inbox me user dikha (naam, last message, unread badge 3) ✅
-- search filter ✅, admin reply user tak pahuncha ✅
-- reload par profile form dobara nahi aaya ✅
-- console/page errors: **0**
-
-> Note: test ke dauraan jo demo user (Sneha/Karan) bane the, unhe Firestore se **delete** kar diya
-> gaya hai — database saaf hai. Jaise hi koi asli user profile save karega, wo admin inbox me aa jayega.
-
----
-
-## Ek command me sab chalao (recommended)
-
-```bash
-npm run setup               # ek hi baar: dono apps ki dependencies install
-npm run dev                 # backend (4317) + user (5173) + admin (5174) — sab ek saath
-npm run dev -- --force      # purane atke hue process band karke fresh start
-```
-
-Script khud **health check** karta hai (teeno ready hone par hi "Sab chal raha hai" likhta hai)
-aur `Ctrl + C` par teeno process + ports saaf kar deta hai — koi orphan `vite` peeche nahi bachta.
-
-Baaki helpers: `npm run build`, `npm run lint`, `npm run reset` (sirf local demo data reset).
-
-Screenshots har app ke andar `preview/` folder me hain:
-`chat-page/preview/` aur `chat-manage-pannel/preview/`.
-
-Dono apps ek hi data source se baat karte hain:
-
-| Mode | Kab | Data kahan |
+| Route | File | Purpose |
 | --- | --- | --- |
-| **Cloud (abhi active)** | Firestore reachable ho | `chats/{chatId}` + `chats/{chatId}/messages/{id}` |
-| **Local fallback** | Firestore fail ho (offline / rules band) | `dev-server/` (port 4317) → `dev-server/.data/db.json` |
+| `/login` | `src/pages/LoginPage.jsx` | Mobile number + password login |
+| `/register` | `src/pages/RegisterPage.jsx` | Create account + Firestore profile |
+| `/` | `src/pages/HomePage.jsx` | All users, search, last message, unread badge |
+| `/chat/:uid` | `src/pages/ChatPage.jsx` | Private text chat (photo, reply, edit, delete, reactions) |
+| `/voice` | `src/pages/VoicePackPage.jsx` | All users for Voice Pack |
+| `/voice/:uid` | `src/pages/VoiceChatPage.jsx` | Private voice-note chat |
+| `/profile` | `src/pages/ProfilePage.jsx` | Photo, name, mobile, bio, logout |
 
----
+Common components live in `src/components`, Firebase integration in
+`src/services`, shared state in `src/context`, and data hooks in `src/hooks`.
 
-## Port busy / "already in use" error
-
-App `vite` me `strictPort: true` hai — isliye port busy hone par chupchaap 5176 par shift nahi hoti,
-seedha error deti hai. Fix:
-
-```bash
-npm run dev -- --force     # 4317 / 5173 / 5174 par jo bhi hai band karke start
-```
-
-Ya sirf dekhna ho ki kaun rok raha hai:
+## 1. Install
 
 ```bash
-ss -ltnp | grep -E ':4317|:5173|:5174'
+cd chat-app
+npm install
 ```
 
----
+## 2. Create a Firebase project
 
-## Manual chalane ka tarika (agar ek-ek karna ho)
+1. <https://console.firebase.google.com/> → **Add project**.
+2. **Authentication → Sign-in method → Email/Password → Enable.**
+3. **Firestore Database → Create database** (production mode is fine, rules are
+   provided below).
+4. **Storage → Get started** (optional; needed only for Firebase-hosted
+   images/voice notes). If Storage is not available on your plan, use the PHP
+   backend described in section 5 instead.
+5. **Project settings → Your apps → Web** and copy the config values.
 
-3 terminals kholo:
+## 3. Environment file
 
 ```bash
-# 1) local backend
-cd dev-server && node server.mjs        # http://localhost:4317
-
-# 2) user app
-cd chat-page && npm install && npm run dev        # http://localhost:5173
-
-# 3) admin app
-cd chat-manage-pannel && npm install && npm run dev   # http://localhost:5174
+cp .env.example .env
 ```
 
-Test karne ka best tarika: **do browser windows** — ek me `localhost:5173` (user),
-doosre me `localhost:5174` (admin). Message bhejo, doosri taraf ~1 sec me dikh jayega.
-
-Demo data: admin inbox me pehle se 2 users (Aarav, Priya) hain. `Reset demo data`
-se wapas original ho jata hai.
-
-> Ek hi browser ke do tabs me kholne se localStorage share hota hai — user app ka
-> profile whi rahega, isliye user ke liye alag browser/window use karo.
-
----
-
-## ☁️ Firebase — ab live hai
-
-> **Setup ka sabse chhota rasta:**
-> ```bash
-> npm run setup && npm run env:create && npm run dev
-> ```
-> `env:create` dono apps ki `.env` khud bana deta hai. Poori detail:
-> **[`FIREBASE-SETUP.md`](./FIREBASE-SETUP.md)** · check: **`npm run env`**
-
-Project `chat-project-ecb1c`, config dono apps ke `.env` me hai, aur Firestore database
-**ban chuka hai** — apps seedha cloud par chal rahi hain (admin footer: *Firebase connected*).
-
-| Cheez | Value |
-| --- | --- |
-| Project | `chat-project-ecb1c` |
-| Database | Firestore (default) — live |
-| Chats | `chats/{chatId}` (profile, lastMessage, unread, counters) |
-| Messages | `chats/{chatId}/messages/{messageId}` |
-| Attachments | **6 MB per file** — chhote inline, bade `chunks` docs me (Firestore 1 MB doc limit ke liye) |
-| Realtime | Firestore `onSnapshot` — dono taraf ~1 sec me update |
-
-**Verified aaj:** profile save → text/image/PDF message → admin inbox (unread badge) → search →
-admin reply → user ko mila → reload par profile form nahi. Errors: 0.
-
-### Config badalna ho to
-
-Dono apps ke `.env` me same values daalo (dono copies alag rakhi gayi hain — "apni cheez apne paas"):
+Fill in:
 
 ```env
 VITE_FIREBASE_API_KEY=...
-VITE_FIREBASE_AUTH_DOMAIN=...
-VITE_FIREBASE_PROJECT_ID=...
-VITE_FIREBASE_STORAGE_BUCKET=...
-VITE_FIREBASE_MESSAGING_SENDER_ID=...
+VITE_FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
+VITE_FIREBASE_PROJECT_ID=your-project
 VITE_FIREBASE_APP_ID=...
+VITE_FIREBASE_MESSAGING_SENDER_ID=...
+VITE_FIREBASE_STORAGE_BUCKET=your-project.firebasestorage.app
 ```
 
-Badalne ke baad dono dev servers restart. Note: `.env` git-ignored hai, `.env.example` repo me hai.
+`VITE_FIREBASE_STORAGE_BUCKET` automatically enables the Firebase Storage
+adapter. Without it, the app runs in **text-only mode**: text chat works fully,
+while the Voice Pack tab, photo attachments and profile-photo upload stay
+hidden. Nothing is silently faked, and you can re-enable media later with either
+Firebase Storage or the HTTP uploader below.
 
-### Agar Firestore phir se fail ho (offline / rules band / quota)
-
-App **crash nahi hoti** — start par 5 sec ka health check chalta hai, fail hone par
-automatic **local mode** (dev-server, port 4317) me chalti hai aur UI par reason dikhati hai.
-Failure 3 minute tak cache hoti hai taaki boot fast rahe. Turant dobara try karne ke liye:
-
-```
-http://localhost:5173/?firebase=retry
-http://localhost:5174/?firebase=retry
-```
-
-### Aage kya improve kar sakte hain (optional, abhi zaroorat nahi)
-
-1. **Bade files:** abhi 6 MB tak chalte hain (chunks). Isse bada chahiye to
-   **Firebase Storage** me upload karke sirf URL message me rakhna better hai (bucket already bana hua hai).
-2. **Security:** abhi test rules (`allow read, write: if true`) hain — production se pehle
-   **Firebase Auth** + per-user rules lagana zaroori hai.
-3. **Admin login:** filhaal admin panel khula hai; Auth lagne par usse bhi protect karna hoga.
-
-**Firestore test rules (sirf development ke liye):**
-
-```
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /chats/{chatId} {
-      allow read, write: if true;
-      match /messages/{messageId} {
-        allow read, write: if true;
-      }
-    }
-  }
-}
-```
-
-⚠️ Ye demo rules hain — production me Auth + per-user rules lagao.
-
-Cloud mode me local demo users (Aarav/Priya) nahi dikhte — inbox sirf asli users dikhata hai.
-Database filhaal khaali hai; jaise hi koi user profile save karega, wo inbox me aa jayega.
-
----
-
-## 📦 Repo size / GitHub push (important)
-
-Is workspace ka **asli code sirf ~1.7 MB** hai. Bhaari cheezein ye hain:
-
-| Cheez | Size | Files | GitHub par jaani chahiye? |
-| --- | --- | --- | --- |
-| `chat-page/node_modules` | ~225 MB | 11,831 | ❌ kabhi nahi |
-| `chat-manage-pannel/node_modules` | ~225 MB | 11,831 | ❌ kabhi nahi |
-| `dist/` (build output) | ~1.2 MB | — | ❌ (`npm run build` se banta hai) |
-| `preview/*.png` (screenshots) | ~840 KB | 8 | 🟡 optional |
-| **Baaki poora source** | **~1.7 MB** | **~100** | ✅ haan |
-
-Agar download/push 450 MB+ ho raha hai to **node_modules zip me aa gaya hai** — wahi time kha raha hai.
-
-### Fast tarika (seconds me push)
-
-1. Workspace se **`eden-chat-source.zip`** download karo — **868 KB, 100 files** (node_modules/dist ke bina).
-2. Unzip → `git init` → `git add .` → commit → push.
-3. Naye machine par bas: `npm run setup` (node_modules wapas aa jayenge, `package-lock.json` pinned hai).
-
-### Agar galti se node_modules push ho gaya
+## 4. Deploy security rules
 
 ```bash
-git rm -r --cached chat-page/node_modules chat-manage-pannel/node_modules
-git rm -r --cached chat-page/dist chat-manage-pannel/dist
-git commit -m "chore: drop node_modules/dist from repo"
-git push
+npm install -g firebase-tools
+firebase login
+firebase use --add          # select your project
+firebase deploy --only firestore:rules
+# add ",storage" only if Firebase Storage is enabled
 ```
 
-`.gitignore` me `node_modules/`, `dist/`, `.data/`, `*.log` aur dono `.env` already hain.
+Rules in this repo:
 
-> `.env` (Firebase config) zip me hai taaki aapka local setup turant chale, lekin `.gitignore`
-> use git se bahar rakhta hai — `.env.example` hi repo me jayega.
+- `firestore.rules` — signed-in only, owner-only profiles, participants-only
+  chats (both `chats` and `voiceChats`), sender-only edits/deletes.
+- `storage.rules` — optional; uploads restricted to the signed-in user,
+  size/MIME limits, chat files only readable by the two participants encoded in
+  the chat id.
 
----
+## 5. Storage adapter (optional HTTP uploader)
 
-## Kaun kya karta hai
+Binary files are **never** written to Firestore; only URLs + metadata are
+stored. Two adapters are available in `src/services/storageAdapter.js`:
 
-**chat-page (user)**
-- Pehla screen: **profile details** — name, mobile, email (validation ke saath)
-- Save hone par `localStorage` me — **dobara nahi puchha jayega**
-- Chat: reply, apni message edit/delete, copy, image + PDF/file, lightbox, ticks
-- Support ke messages par sirf copy/reply
-- Info sheet me: Edit my profile, Log out
+- **Firebase Storage** (default when a bucket is set).
+- **HTTP endpoint** — set:
 
-**chat-manage-pannel (admin)**
-- Home: **saare users ki list** — naam, last message, time, unread badge, search
-- **Tap → us user ke saath chat** khul jati hai
-- Reply, apni message edit/delete, image/PDF bhejna, user ki details copy
-- Chat kholte hi unread clear + user ke messages read (✓✓)
+```env
+VITE_STORAGE_PROVIDER=http
+VITE_UPLOAD_ENDPOINT=https://your-server.example/upload
+VITE_UPLOAD_TOKEN=optional-bearer-token
+```
 
----
+The endpoint receives `multipart/form-data` with `file` and `folder`, and must
+return JSON:
 
-## Commands
+```json
+{ "url": "https://cdn.example/file.webp", "path": "chatImages/uidA_uidB/file.webp" }
+```
 
-Root me:
+### Bundled PHP backend
+
+If Firebase Storage is not available, use the ready-made backend in
+[`backend-php/`](backend-php/README.md). It runs on any PHP 8 host, can be
+hosted on a different domain from the frontend, validates Firebase ID tokens,
+checks chat participants, and serves files through signed URLs.
+
+```env
+VITE_STORAGE_PROVIDER=http
+VITE_UPLOAD_ENDPOINT=https://api.your-domain.com/upload.php
+# VITE_UPLOAD_TOKEN stays empty for the bundled backend
+```
+
+Deploy the PHP backend separately; see its README for the document root, CORS,
+storage permissions and configuration. No Firebase Storage/Blaze plan is
+required. Open the backend URL after deployment for its status dashboard, which
+lists working features and any configuration errors.
+
+## 6. Run
 
 ```bash
-npm run setup       # dono apps ki dependencies
-npm run dev         # backend + user app + admin app
-npm run dev -- --force   # purane process band karke fresh start
-npm run env         # Firebase config check (kaunsi key missing hai)
-npm run env:create  # dono apps ki .env khud bana do (values auto)
-npm run build       # dono apps ka production build
+npm run dev      # http://localhost:5173
+npm run build    # production build in dist/
+npm run preview
 npm run lint
-npm run reset       # sirf local demo data
 ```
 
-Har app ke andar:
+If port `5173` is already in use, pass another port, for example
+`npm run dev -- --port 5180`.
+
+To test on your phone over the LAN, run the dev server and open
+`http://<computer-ip>:5173`. Microphone recording and the clipboard API require a
+secure context: they work on `localhost` and on any HTTPS deployment, but most
+mobile browsers block them over plain LAN HTTP. For real phone testing deploy
+with Firebase Hosting:
 
 ```bash
-npm run dev      # dev server
-npm run build    # production build (dist/)
-npm run preview  # build preview
-npm run lint     # oxlint
+npm run build
+firebase deploy --only hosting
 ```
+
+## 7. Local testing with the Firebase Emulator Suite
+
+No real Firebase project is required for local testing. The emulators use the
+`demo-personal-chat` project and the same security rules as production.
+
+```bash
+firebase emulators:start --only auth,firestore,storage --project demo-personal-chat
+npm run dev -- --port 5180
+```
+
+`.env.local` (gitignored) contains the demo configuration:
+
+```env
+VITE_FIREBASE_PROJECT_ID=demo-personal-chat
+VITE_FIREBASE_API_KEY=demo-api-key
+VITE_USE_FIREBASE_EMULATORS=true
+VITE_EMULATOR_HOST=127.0.0.1
+```
+
+- App: <http://localhost:5180/>
+- Emulator UI: <http://127.0.0.1:4000/>
+- Register any mobile number and password; emulator data is cleared when the
+  emulators stop.
+- The emulators bind to `127.0.0.1`. To test from another device, bind them to
+  `0.0.0.0` and set `VITE_EMULATOR_HOST` to this machine's LAN IP.
+
+## 8. Production deployment
+
+Production builds **refuse to compile** with demo/emulator values. This includes
+`.env.local`, which overrides `.env` during a local build and is gitignored.
+
+1. In the Firebase Console, enable **Authentication → Email/Password**, create
+   **Firestore**, and create **Storage** if you want image/voice uploads.
+2. Fill real values in `.env` (`cp .env.example .env`).
+3. Move the local emulator config out of the way:
+   ```bash
+   mv .env.local .env.local.testing
+   ```
+4. Select the real project (creates a gitignored `.firebaserc`):
+   ```bash
+   firebase login
+   firebase use --add
+   ```
+5. For images/voice notes, deploy `backend-php/` to your PHP host and set
+   `VITE_STORAGE_PROVIDER=http` + `VITE_UPLOAD_ENDPOINT` in `.env` before
+   building. See [`backend-php/README.md`](backend-php/README.md).
+6. Build and deploy:
+   ```bash
+   npm run build
+   firebase deploy --only firestore:rules,hosting
+   ```
+   Add `storage` to `--only` only if Firebase Storage is enabled.
+7. In **Authentication → Settings → Authorized domains**, add the Hosting domain
+   (`<project>.web.app` / your custom domain).
+8. To return to local emulator testing:
+   ```bash
+   mv .env.local.testing .env.local
+   ```
+
+The generated `dist/` folder is intentionally gitignored and is never committed.
+
+### Vercel frontend
+
+Set **Root Directory** to the repository root (leave it empty) and add these
+variables in **Vercel → Project → Settings → Environment Variables** for the
+**Production** environment:
+
+```env
+VITE_FIREBASE_API_KEY=...
+VITE_FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
+VITE_FIREBASE_PROJECT_ID=your-project
+VITE_FIREBASE_APP_ID=...
+VITE_FIREBASE_MESSAGING_SENDER_ID=...
+# omit VITE_FIREBASE_STORAGE_BUCKET when using the PHP backend
+VITE_STORAGE_PROVIDER=http
+VITE_UPLOAD_ENDPOINT=https://api.your-domain.com/upload.php
+```
+
+Redeploy after adding variables — Vercel only reads them during a new build.
+`vercel.json` adds the SPA rewrite so `/chat/:uid` and `/profile` survive a
+refresh. Also add the Vercel domain (`<project>.vercel.app` and any custom
+domain) to Firebase **Authentication → Settings → Authorized domains**, and to
+`allowed_origins` in the PHP backend config.
+
+If the build fails with `Missing: VITE_FIREBASE_...`, those variables are not
+visible to the build. Check that they are added to the Production environment
+and trigger a new deployment.
+
+This repo also includes `.env.production` with the public Firebase web config,
+so a Git-based Vercel deploy works without dashboard variables. Vercel
+environment variables (if set) take precedence. The Firebase web API key is a
+public client identifier, not a server secret — protect the project with the
+included Firestore rules and API key restrictions.
+
+## Reactions
+
+Every message (text, photo, voice note and video) supports emoji reactions:
+
+- **Up to 5 different emojis per user per message** (`MAX_REACTIONS_PER_USER`
+  in `src/utils/emoji.js`, also enforced by `firestore.rules`).
+- **Instant, optimistic UI** — the emoji appears on the next frame, before the
+  Firestore write finishes, and rolls back only if the write fails.
+- **Reactions never send a Telegram alert.** The only notification is the
+  in-app toast + sound from `NotificationSounds`, driven by the thread's
+  `lastReaction` field — exactly like a normal incoming message.
+- The reaction itself is saved in the `reactions` map on the message document,
+  so the other participant sees it as soon as their live snapshot updates.
+
+## Authentication design (mobile number + password)
+
+Firebase's native phone sign-in is OTP-based and has no password method. This
+app therefore uses **Firebase Email/Password** as the credential store with a
+deterministic internal identifier derived from the mobile number:
+
+```
+9876543210  ->  m9876543210@chat.local
+```
+
+- Passwords are hashed and managed by Firebase Authentication. They are never
+  written to Firestore or any custom field.
+- Duplicate mobile numbers are rejected by Firebase Auth (`email-already-in-use`
+  mapped to "This mobile number is already registered").
+- To use a real backend/OTP flow later, only `src/services/authAdapter.js` needs
+  to change; pages depend on `authService` only.
+
+## Firestore data model
+
+```
+users/{uid}
+  uid, displayName, mobileNumber, photoURL, bio,
+  createdAt, updatedAt, lastSeen
+
+chats/{uidA_uidB}
+  participants: [uidA, uidB]
+  lastMessage: { id, type, text, senderId, createdAt, edited, deletedForEveryone }
+  unread: { [uid]: number }
+  createdAt, updatedAt
+
+chats/{uidA_uidB}/messages/{messageId}
+  senderId, type: "text" | "image", text,
+  imageUrl, replyTo, reactions: { [uid]: emoji },
+  hiddenFor: [uid], deletedForEveryone, createdAt, editedAt
+
+voiceChats/...   (same shape, type: "voice", audioUrl + duration)
+```
+
+`delete for me` uses `hiddenFor`; `delete for everyone` clears the payload and
+sets `deletedForEveryone`. `unread` is incremented for the recipient on send and
+reset to 0 when the chat is opened.
+
+The thread subscribes to the latest 500 messages (live). Older history can be
+added with pagination later without changing the data model.
