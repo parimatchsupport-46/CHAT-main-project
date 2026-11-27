@@ -10,6 +10,7 @@
     "lint": "oxlint"
   },
   "dependencies": {
+    "@coolicons/react": "^5.5.0",
     "firebase": "^11.10.0",
     "iconoir-react": "^7.12.2",
     "react": "^19.3.1",

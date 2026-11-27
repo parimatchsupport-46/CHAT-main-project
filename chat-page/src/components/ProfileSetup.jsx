@@ -1,6 +1,8 @@
 import { useState } from 'react';
-import { ArrowRight, Lock, Mail, Phone, User, WarningTriangle } from 'iconoir-react';
+import { ArrowRight, Lock, Mail, Phone, WarningTriangle } from 'iconoir-react';
+import { UserVoice } from '@coolicons/react';
 import { DATA_MODE, MODE_REASON } from '../lib/api.js';
+import BrandLogo from './BrandLogo.jsx';
 
 const validName = (v) => v.trim().length >= 2;
 const cleanMobile = (v) => {
@@ -47,22 +49,19 @@ export default function ProfileSetup({ initial, onSave, saving, serverError }) {
   const fieldError = (key) => (touched[key] ? errors[key] : '');
 
   return (
-    <div className="app-shell">
-      <div className="chat-card profile-card">
-        <div className="profile-wrap">
-          <div className="profile-top">
-            <span className="profile-logo">E</span>
-            <h1 className="profile-title">Welcome to Eden</h1>
-            <p className="profile-sub">
-              Chat shuru karne se pehle apni details bhar do — ye sirf ek baar puchha jayega.
-            </p>
-          </div>
+    <div className="auth-shell">
+      <div className="auth-card">
+        <aside className="auth-brand">
+          <BrandLogo />
+          <h1 className="auth-name">Live Chat</h1>
+        </aside>
 
+        <section className="auth-panel">
           <form className="profile-form" onSubmit={submit} noValidate>
             <label className="field">
               <span className="field-label">Full name</span>
               <span className={`field-box${fieldError('name') ? ' is-error' : ''}`}>
-                <User width={18} height={18} strokeWidth={1.9} color="#8E8E93" />
+                <UserVoice size={18} strokeWidth={1.9} color="#8E8E93" />
                 <input
                   type="text"
                   value={name}
@@ -140,7 +139,7 @@ export default function ProfileSetup({ initial, onSave, saving, serverError }) {
                 : 'Local dev mode · Firebase config add karte hi cloud par shift ho jayega'}
             </p>
           )}
-        </div>
+        </section>
       </div>
     </div>
   );

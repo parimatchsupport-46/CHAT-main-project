@@ -13,6 +13,26 @@ is folder me nahi hai.
 4. Profile badalna ho to: header avatar / info → **Edit my profile**.
    Local data hatana ho to: **Log out**.
 
+## Branding (logo + naam)
+
+- **Naam:** `Live Chat` — profile screen par heading, aur browser tab ka title.
+- **Logo:** apni file yahan rakho → **`chat-page/public/logo.png`**
+  (PNG / JPG / SVG, naam exactly `logo.png`). App khud use kar legi — mobile aur desktop dono par.
+  File na ho to ek clean default mark (blue chat bubble + green dot) dikhta hai.
+- Logo ki jagah: `src/components/BrandLogo.jsx` — size/rounding CSS me
+  `.auth-logo` se control hoti hai.
+
+> NOTE: `logo.png` na hone par `<img>` fail hoti hai aur fallback SVG dikhta hai —
+> console me ek 404 dikh sakta hai, koi asar nahi.
+
+## Responsive layout
+
+| Screen | Profile screen |
+| --- | --- |
+| Mobile (`< 640px`) | logo + naam upar centered, form neeche (full width, safe-area padding) |
+| Tablet (`640–899px`) | same single column, form max 470px centered |
+| Desktop (`≥ 900px`) | **do-pane card**: left brand panel (logo + naam + soft blue glow), right form panel |
+
 ## Features
 
 | Feature | Detail |

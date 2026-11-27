@@ -1834,59 +1834,140 @@ textarea:focus-visible {
    PROFILE SETUP (chat-page only) + connection banner
    ========================================================================== */
 
-.profile-card {
-  overflow-y: auto;
-  justify-content: flex-start;
+/* Auth / profile screen — mobile aur desktop dono ke liye alag layout */
+
+.auth-shell {
+  min-height: 100dvh;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  background: var(--white);
 }
 
-.profile-wrap {
+.auth-card {
   width: 100%;
-  max-width: 420px;
-  margin: 0 auto;
-  padding: 44px 22px 32px;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  min-height: 100%;
+  background: var(--white);
 }
 
-.profile-top {
+/* --- mobile: logo + naam upar, form neeche ------------------------------- */
+.auth-brand {
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   align-items: center;
+  gap: 12px;
+  padding: calc(52px + env(safe-area-inset-top)) 24px 2px;
   text-align: center;
-  margin-bottom: 26px;
 }
 
-.profile-logo {
-  width: 58px;
-  height: 58px;
+.auth-logo {
+  width: 66px;
+  height: 66px;
+  display: block;
+  object-fit: contain;
+  border-radius: 20px;
+  background: linear-gradient(160deg, #0a84ff 0%, #5ac8fa 100%);
+  box-shadow: 0 10px 26px rgba(0, 122, 255, 0.26);
+}
+
+.auth-logo.brand-fallback {
   display: grid;
   place-items: center;
-  margin-bottom: 16px;
-  border-radius: 17px;
-  background: linear-gradient(160deg, #0a84ff 0%, #5ac8fa 100%);
-  color: #fff;
-  font-size: 27px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  box-shadow: 0 8px 22px rgba(0, 122, 255, 0.28);
+  padding: 15px;
 }
 
-.profile-title {
+.auth-logo.brand-fallback svg {
+  width: 100%;
+  height: 100%;
+}
+
+.auth-name {
   margin: 0;
-  font-size: 24px;
+  font-size: 25px;
   font-weight: 700;
   letter-spacing: -0.03em;
   color: var(--ink);
 }
 
-.profile-sub {
-  margin: 8px 0 0;
-  max-width: 320px;
-  font-size: 13.5px;
-  line-height: 1.45;
-  color: var(--gray);
+.auth-panel {
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: 430px;
+  margin: 0 auto;
+  padding: 26px 22px calc(28px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+}
+
+/* --- desktop: do hisse — brand left, form right -------------------------- */
+@media (min-width: 900px) {
+  .auth-shell {
+    align-items: center;
+    padding: 28px;
+    background: #f5f5f7;
+  }
+
+  .auth-card {
+    min-height: 0;
+    width: 100%;
+    max-width: 1000px;
+    height: min(700px, calc(100dvh - 56px));
+    flex-direction: row;
+    border: 1px solid var(--hairline);
+    border-radius: 28px;
+    overflow: hidden;
+    box-shadow: 0 30px 80px rgba(16, 24, 40, 0.1);
+  }
+
+  .auth-brand {
+    flex: 1 1 46%;
+    justify-content: center;
+    gap: 18px;
+    padding: 48px 40px;
+    border-right: 1px solid var(--hairline-soft);
+    background:
+      radial-gradient(90% 70% at 50% 22%, #dcecff 0%, rgba(220, 236, 255, 0.55) 42%, #ffffff 78%),
+      linear-gradient(180deg, #f4f9ff 0%, #ffffff 100%);
+  }
+
+  .auth-logo {
+    width: 96px;
+    height: 96px;
+    border-radius: 29px;
+    box-shadow: 0 16px 34px rgba(0, 122, 255, 0.24);
+  }
+
+  .auth-logo.brand-fallback {
+    padding: 22px;
+  }
+
+  .auth-name {
+    font-size: 36px;
+    letter-spacing: -0.035em;
+  }
+
+  .auth-panel {
+    flex: 1 1 54%;
+    max-width: none;
+    padding: 56px 52px;
+    justify-content: center;
+  }
+}
+
+/* tablet — card thoda compact */
+@media (min-width: 640px) and (max-width: 899px) {
+  .auth-panel {
+    max-width: 470px;
+    padding-top: 34px;
+  }
+
+  .auth-brand {
+    padding-top: calc(56px + env(safe-area-inset-top));
+  }
 }
 
 .profile-form {

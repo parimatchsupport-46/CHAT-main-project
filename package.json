@@ -11,6 +11,8 @@
     "dev:admin": "npm --prefix chat-manage-pannel run dev",
     "build": "npm --prefix chat-page run build && npm --prefix chat-manage-pannel run build",
     "lint": "npm --prefix chat-page run lint && npm --prefix chat-manage-pannel run lint",
-    "reset": "curl -s -X POST http://127.0.0.1:4317/api/reset && echo"
+    "reset": "curl -s -X POST http://127.0.0.1:4317/api/reset && echo",
+    "env": "node scripts/check-env.mjs",
+    "env:create": "node scripts/create-env.mjs"
   }
 }
