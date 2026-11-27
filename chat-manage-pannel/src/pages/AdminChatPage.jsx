@@ -42,6 +42,7 @@ export default function AdminChatPage({ chatId }) {
   return (
     <ChatScreen
       messages={messages}
+      chatId={chatId}
       meRole="support"
       peer={peer}
       maxBytes={MAX_BYTES}

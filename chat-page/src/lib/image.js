@@ -1,19 +1,42 @@
-/** Image ko chhota + compress karta hai taaki Firestore doc limit ke andar rahe. */
-export const compressImage = async (file, { maxSide = 1400, quality = 0.82 } = {}) => {
+/**
+ * Image ko chhota + compress karta hai.
+ * Target: jitna chhota ho utna accha (Firestore me inline ja sake), par quality theek rahe —
+ * isliye quality step-by-step kam karta hai jab tak target bytes se neeche na aa jaye.
+ */
+export const compressImage = async (
+  file,
+  { maxSide = 1600, quality = 0.82, targetBytes = 520 * 1024 } = {},
+) => {
   if (!file || !String(file.type || '').startsWith('image/')) return null;
   if (file.type === 'image/gif' || file.type === 'image/svg+xml') return null;
 
   try {
     const bitmap = await createImageBitmap(file);
-    const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return null;
-    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const encode = (side, q) => {
+      const scale = Math.min(1, side / Math.max(bitmap.width, bitmap.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return '';
+      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL('image/jpeg', q);
+    };
+
+    let best = encode(maxSide, quality);
+    // zarurat pade to quality/size ghatao (max 4 koshish)
+    for (const [side, q] of [
+      [maxSide, 0.72],
+      [Math.min(maxSide, 1280), 0.7],
+      [Math.min(maxSide, 1080), 0.65],
+    ]) {
+      if (dataUrlBytes(best) <= targetBytes) break;
+      const next = encode(side, q);
+      if (next && dataUrlBytes(next) < dataUrlBytes(best)) best = next;
+    }
+
     bitmap.close?.();
-    return canvas.toDataURL('image/jpeg', quality);
+    return best;
   } catch {
     return null;
   }

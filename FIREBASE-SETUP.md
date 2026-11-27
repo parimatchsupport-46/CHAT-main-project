@@ -281,7 +281,7 @@ Environment select karte waqt **Production + Preview + Development** teeno tick 
 | **Vercel par `Backend se connect nahi ho paya` / `/api 404`** | Vercel ko env vars nahi mile → local mode | Section 6: env vars daalo → **Redeploy** |
 | `403 PERMISSION_DENIED` | Firestore database nahi bana / rules | console → Create database + rules |
 | File dikh hi nahi rahi | dot wali file hidden hai | `dir -Force` / View → Hidden items |
-| Bada PDF error | Firestore doc limit 1 MB → cap 700 KB | aage Firebase Storage use karo |
+| Bada PDF/photo na jaye | limit 6 MB per file hai | usse bada file Firebase Storage se bhejna padega |
 
 ---
 

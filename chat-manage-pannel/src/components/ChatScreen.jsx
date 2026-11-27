@@ -15,6 +15,7 @@ import { messagePreview } from '../lib/format.js';
  */
 export default function ChatScreen({
   messages,
+  chatId,
   meRole,
   peer,
   onSend,
@@ -188,6 +189,7 @@ export default function ChatScreen({
 
         <MessageList
           messages={messages}
+          chatId={chatId}
           meRole={meRole}
           peerName={peer.shortName || peer.name}
           typing={typing}

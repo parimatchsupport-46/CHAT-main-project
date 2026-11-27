@@ -18,8 +18,17 @@ export const useFirebase = Boolean(firebaseConfig.apiKey && firebaseConfig.proje
 
 export const API_BASE = env.VITE_API_BASE || '/api';
 
-/** Firestore doc 1 MB limit hoti hai, isliye cloud me chhota cap. */
-export const FIREBASE_ATTACHMENT_LIMIT = 700 * 1024;
-export const LOCAL_ATTACHMENT_LIMIT = 4 * 1024 * 1024;
+/**
+ * Attachments
+ *  - Firestore doc ki limit 1 MB hoti hai, isliye bada file "chunks" me save hota hai
+ *    (chats/{chatId}/messages/{id}/parts/{attId}__0000 …) aur read karte waqt joda jaata hai.
+ *  - Isliye ab asli photos/PDFs bhi chalte hain: har attachment ka apna cap.
+ */
+export const FIREBASE_ATTACHMENT_LIMIT = 6 * 1024 * 1024; // 6 MB per file
+export const LOCAL_ATTACHMENT_LIMIT = 6 * 1024 * 1024;
+/** Isse chhota attachment seedha message doc me (inline) rehta hai. */
+export const INLINE_ATTACHMENT_LIMIT = 600 * 1024;
+/** Ek chunk me base64 characters (doc 1 MB se neeche rahe). */
+export const CHUNK_CHARS = 300 * 1024;
 
 export const MODE = useFirebase ? 'firebase' : 'local';

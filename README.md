@@ -123,7 +123,7 @@ Project `chat-project-ecb1c`, config dono apps ke `.env` me hai, aur Firestore d
 | Database | Firestore (default) — live |
 | Chats | `chats/{chatId}` (profile, lastMessage, unread, counters) |
 | Messages | `chats/{chatId}/messages/{messageId}` |
-| Attachments | message ke andar base64 `dataUrl` (Firestore doc limit ki wajah se **700 KB max**) |
+| Attachments | **6 MB per file** — chhote inline, bade `chunks` docs me (Firestore 1 MB doc limit ke liye) |
 | Realtime | Firestore `onSnapshot` — dono taraf ~1 sec me update |
 
 **Verified aaj:** profile save → text/image/PDF message → admin inbox (unread badge) → search →
@@ -157,7 +157,7 @@ http://localhost:5174/?firebase=retry
 
 ### Aage kya improve kar sakte hain (optional, abhi zaroorat nahi)
 
-1. **Bade files:** Firestore doc 1 MB ka hota hai, isliye attachment limit 700 KB hai. Bade PDF ke liye
+1. **Bade files:** abhi 6 MB tak chalte hain (chunks). Isse bada chahiye to
    **Firebase Storage** me upload karke sirf URL message me rakhna better hai (bucket already bana hua hai).
 2. **Security:** abhi test rules (`allow read, write: if true`) hain — production se pehle
    **Firebase Auth** + per-user rules lagana zaroori hai.

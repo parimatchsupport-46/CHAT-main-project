@@ -52,7 +52,7 @@ export default function ProfileSetup({ initial, onSave, saving, serverError }) {
     <div className="auth-shell">
       <div className="auth-card">
         <aside className="auth-brand">
-          <BrandLogo />
+          <BrandLogo size={66} className="brand-mark auth-brand-mark" />
           <h1 className="auth-name">Live Chat</h1>
         </aside>
 

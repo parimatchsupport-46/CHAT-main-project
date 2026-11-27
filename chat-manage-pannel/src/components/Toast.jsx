@@ -14,7 +14,8 @@ export function ToastProvider({ children }) {
   const notify = useCallback((text, tone = 'ok') => {
     clearTimeout(timer.current);
     setToast({ text, tone, id: Date.now() });
-    timer.current = setTimeout(() => setToast(null), 2100);
+    // errors/warnings thoda lamba dikhein taaki padhne ka time mile
+    timer.current = setTimeout(() => setToast(null), tone === 'warn' ? 4200 : 2100);
   }, []);
 
   useEffect(() => () => clearTimeout(timer.current), []);

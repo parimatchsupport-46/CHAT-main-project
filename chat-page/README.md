@@ -15,15 +15,13 @@ is folder me nahi hai.
 
 ## Branding (logo + naam)
 
-- **Naam:** `Live Chat` — profile screen par heading, aur browser tab ka title.
-- **Logo:** apni file yahan rakho → **`chat-page/public/logo.png`**
-  (PNG / JPG / SVG, naam exactly `logo.png`). App khud use kar legi — mobile aur desktop dono par.
-  File na ho to ek clean default mark (blue chat bubble + green dot) dikhta hai.
-- Logo ki jagah: `src/components/BrandLogo.jsx` — size/rounding CSS me
-  `.auth-logo` se control hoti hai.
-
-> NOTE: `logo.png` na hone par `<img>` fail hoti hai aur fallback SVG dikhta hai —
-> console me ek 404 dikh sakta hai, koi asar nahi.
+- **Naam:** `Live Chat` — profile screen par heading + browser tab title.
+- **Logo:** Iconoir ke `ChatBubbleEmpty` icon se bana green mark — white bubble + chhota dot
+  (green gradient tile). File: `src/components/BrandLogo.jsx`.
+- **Favicon:** wahi artwork `index.html` me inline SVG data-URI ke roop me hai —
+  tab icon aur app logo bilkul same.
+- **Rang badalna ho:** `BrandLogo.jsx` me `GREEN_LIGHT` / `GREEN_DEEP` badalo, aur
+  `index.html` ke favicon me same hex (do jagah).
 
 ## Responsive layout
 
@@ -73,7 +71,11 @@ VITE_FIREBASE_APP_ID=
 Values bharne par app automatic **Firestore realtime** par chali jayegi (dev-server ki
 zarurat nahi). Poora step-by-step: root `README.md` me.
 
-> Attachment limit: Firebase mode me **~700 KB per file** (Firestore doc 1 MB limit).
+> **Attachment limit: 6 MB per file** (dono mode me).
+> Bada file Firestore me "chunks" (chhote docs) me tootkar jaata hai aur read karte waqt judta hai —
+> isliye 6 MB tak PDF/photo bhi chalta hai. Photos 1600px @ ~520 KB tak compress hoti hain
+> (zyadatar inline hi chali jaati hain). Chunk docs me `createdAt` nahi hota, isliye wo
+> message list / unread count / last message me kabhi nahi dikhte.
 > Production me bade files ke liye Firebase Storage use karo.
 
 ## Structure

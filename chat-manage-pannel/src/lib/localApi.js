@@ -74,6 +74,8 @@ export const api = {
   markRead: (chatId, who) =>
     request(`/chats/${chatId}/read`, { method: 'POST', body: JSON.stringify({ who }) }),
 
+  loadAttachment: async (_chatId, _messageId, attachment) => attachment?.dataUrl || '',
+
   resetDemo: () => request('/reset', { method: 'POST' }),
 
   health: () => request('/health'),

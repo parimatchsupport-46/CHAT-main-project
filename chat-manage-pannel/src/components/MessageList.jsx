@@ -14,6 +14,7 @@ const shouldBreak = (a, b) => {
 
 export default function MessageList({
   messages,
+  chatId,
   meRole,
   peerName,
   typing,
@@ -90,6 +91,7 @@ export default function MessageList({
                   )}
                   <MessageBubble
                     message={message}
+                    chatId={chatId}
                     meRole={meRole}
                     peerName={peerName}
                     isFirstInGroup={shouldBreak(prev, message)}

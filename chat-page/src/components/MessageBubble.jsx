@@ -1,6 +1,7 @@
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, DoubleCheck, Download, MoreHoriz, Page } from 'iconoir-react';
 import { fileKind, formatBytes, formatTime } from '../lib/format.js';
+import { api } from '../lib/api.js';
 
 const FileGlyph = ({ kind }) => (
   <span className={`file-glyph kind-${kind}`}>
@@ -11,6 +12,7 @@ const FileGlyph = ({ kind }) => (
 
 export default function MessageBubble({
   message,
+  chatId,
   meRole,
   peerName,
   isFirstInGroup,
@@ -21,6 +23,9 @@ export default function MessageBubble({
 }) {
   const isMe = message.from === meRole;
   const press = useRef({ timer: null, x: 0, y: 0 });
+  // bade attachments chunk-docs se aate hain — jab load ho jayein tab dikhado
+  const [loadedUrls, setLoadedUrls] = useState({});
+  const [failedUrls, setFailedUrls] = useState({});
 
   const clearPress = () => {
     clearTimeout(press.current.timer);
@@ -47,6 +52,27 @@ export default function MessageBubble({
   };
 
   const attachments = message.attachments || [];
+
+  useEffect(() => {
+    let alive = true;
+    const missing = (message.attachments || []).filter((a) => !a.dataUrl);
+    if (!missing.length || !chatId) return undefined;
+    missing.forEach(async (att) => {
+      try {
+        const url = await api.loadAttachment(chatId, message.id, att);
+        if (alive && url) setLoadedUrls((prev) => ({ ...prev, [att.id]: url }));
+        else if (alive) setFailedUrls((prev) => ({ ...prev, [att.id]: true }));
+      } catch {
+        if (alive) setFailedUrls((prev) => ({ ...prev, [att.id]: true }));
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, [chatId, message.id, message.attachments]);
+
+  const srcOf = (att) => att.dataUrl || loadedUrls[att.id] || '';
+
   const images = attachments.filter((a) => a.kind === 'image');
   const files = attachments.filter((a) => a.kind !== 'image');
   const quoteAuthor =
@@ -88,17 +114,24 @@ export default function MessageBubble({
 
         {images.length > 0 && (
           <div className={`img-grid count-${Math.min(images.length, 3)}`}>
-            {images.map((img) => (
-              <button
-                key={img.id}
-                type="button"
-                className="img-btn"
-                onClick={() => onOpenImage(img)}
-                aria-label={`Open image ${img.name}`}
-              >
-                <img className="img" src={img.dataUrl} alt={img.name} loading="lazy" />
-              </button>
-            ))}
+            {images.map((img) => {
+              const src = srcOf(img);
+              return (
+                <button
+                  key={img.id}
+                  type="button"
+                  className={`img-btn${src ? '' : ' is-loading'}`}
+                  onClick={() => src && onOpenImage({ ...img, dataUrl: src })}
+                  aria-label={src ? `Open image ${img.name}` : 'Image load ho rahi hai'}
+                >
+                  {src ? (
+                    <img className="img" src={src} alt={img.name} loading="lazy" />
+                  ) : (
+                    <span className="img-skeleton" />
+                  )}
+                </button>
+              );
+            })}
           </div>
         )}
 
@@ -107,11 +140,12 @@ export default function MessageBubble({
             {files.map((file) => (
               <a
                 key={file.id}
-                className="file-card"
-                href={file.dataUrl || undefined}
-                download={file.name}
-                target={file.dataUrl ? undefined : '_blank'}
+                className={`file-card${srcOf(file) ? '' : ' is-loading'}`}
+                href={srcOf(file) || undefined}
+                download={srcOf(file) ? file.name : undefined}
+                target={srcOf(file) ? undefined : '_blank'}
                 rel="noreferrer"
+                aria-disabled={srcOf(file) ? undefined : true}
               >
                 <FileGlyph kind={fileKind(file.name)} />
                 <span className="file-meta">

@@ -39,6 +39,7 @@ function ChatApp({ session, onEditProfile, onLogout }) {
 
       <ChatScreen
         messages={messages}
+        chatId={session.chatId}
         meRole="user"
         peer={PEER}
         maxBytes={MAX_BYTES}
