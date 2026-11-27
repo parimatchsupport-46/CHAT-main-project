@@ -40,8 +40,8 @@ is folder me nahi hai.
 | Delete | Sirf apni message — iOS confirm alert |
 | Copy | Har message par |
 | Support ki chat | Sirf Copy + Reply (edit/delete nahi) |
-| Images | Multiple photos, auto-compress, full screen viewer + download |
-| PDF / files | PDF, DOC, XLS, PPT, TXT, ZIP |
+| Images | Composer ke **photo icon** se seedha gallery khulti hai · auto-compress · full screen viewer + download |
+| PDF / files | Composer ke **page icon** se seedha file picker · PDF, DOC, XLS, PPT, TXT, ZIP · max 6 MB |
 | Ticks | ✓ bheja, ✓✓ admin ne padha |
 | Live | Admin ka reply ~1 sec me (local) ya turant (Firebase) |
 | Persistence | Profile local, messages backend par |

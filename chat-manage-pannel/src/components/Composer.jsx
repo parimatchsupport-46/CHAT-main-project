@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  Attachment,
   Check,
   EditPencil,
   Emoji,
@@ -10,7 +9,6 @@ import {
   SendDiagonal,
   Xmark,
 } from 'iconoir-react';
-import ActionSheet from './ActionSheet.jsx';
 import { QUICK_EMOJIS } from '../data/constants.js';
 import { extOf } from '../lib/format.js';
 import { MAX_BYTES } from '../lib/api.js';
@@ -32,7 +30,6 @@ export default function Composer({
   maxBytes = MAX_BYTES,
 }) {
   const notify = useToast();
-  const [attachOpen, setAttachOpen] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const textRef = useRef(null);
   const imageInputRef = useRef(null);
@@ -185,10 +182,21 @@ export default function Composer({
         <button
           type="button"
           className="round-btn is-blue"
-          aria-label="Attach a file"
-          onClick={() => setAttachOpen(true)}
+          aria-label="Photo bhejo (gallery khulegi)"
+          title="Photo"
+          onClick={() => imageInputRef.current?.click()}
         >
-          <Attachment width={20} height={20} strokeWidth={1.9} color="#007AFF" />
+          <MediaImage width={20} height={20} strokeWidth={1.9} color="#007AFF" />
+        </button>
+
+        <button
+          type="button"
+          className="round-btn is-gray"
+          aria-label="Document ya PDF bhejo"
+          title="Document / PDF"
+          onClick={() => fileInputRef.current?.click()}
+        >
+          <Page width={20} height={20} strokeWidth={1.9} color="#FF9500" />
         </button>
 
         <textarea
@@ -278,26 +286,6 @@ export default function Composer({
         }}
       />
 
-      <ActionSheet
-        open={attachOpen}
-        title="Send attachment"
-        subtitle={`Photos, PDFs or documents · max ${formatBytes(maxBytes)}`}
-        onClose={() => setAttachOpen(false)}
-        actions={[
-          {
-            key: 'photo',
-            label: 'Photo & video',
-            icon: <MediaImage width={21} height={21} strokeWidth={1.9} color="#007AFF" />,
-            onClick: () => imageInputRef.current?.click(),
-          },
-          {
-            key: 'pdf',
-            label: 'Document / PDF',
-            icon: <Page width={21} height={21} strokeWidth={1.9} color="#FF9500" />,
-            onClick: () => fileInputRef.current?.click(),
-          },
-        ]}
-      />
     </div>
   );
 }
